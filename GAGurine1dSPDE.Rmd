@@ -1,0 +1,345 @@
+---
+title: "Modeling the GAG urine data with INLA"
+author: "Elias T. Krainski"
+date: "August 17, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+options(width=100)
+library(knitr)
+opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knit_hooks$set(small.mar = function(before, options, envir) {
+  if (before) par(mar = c(3, 3, .1, .1), mgp=c(1.5, 0.7,0)) ## small margin on top and right
+})
+knit_hooks$set(tiny.mar = function(before, options, envir) {
+  if (before) par(mar = c(1.5, 1.5, .1, .1), mgp=c(2,0.7,0)) ## tiny margin on top and right
+})
+knit_hooks$set(mfrow21 = function(before, options, envir) {
+  if (before) par(mfrow = c(2, 1)) ## tiny margin on top and right
+})
+library(INLA)
+```
+
+## The data
+
+We import the GAG urine data from the **MASS** package with 
+```{r data}
+data(GAGurine, package='MASS')
+n <- nrow(GAGurine)
+GAGurine[c(1, n), ] ### first and last rows
+``` 
+
+We can visualize this data in the original scale and considering the logarithm 
+scale for GAG with 
+```{r plot, fig.width=10, fig.height=7, out.width="99%", small.mar=TRUE, mfrow21=TRUE}
+data(GAGurine, package='MASS')
+plot(GAGurine, pch=19, col=gray(.5), 
+     xlab='Age (years)', ylab='Childrens GAG concentration')
+plot(GAGurine, pch=19, col=gray(.5), log='y', 
+     xlab='Age (years)', ylab='Childrens GAG concentration')
+```
+
+We start by considering the logarithm of GAG as our outcome 
+in order to illustrate the point of this example. 
+
+```{r ydat}
+dat <- list(y=log(GAGurine$GAG), x=GAGurine$Age)
+```
+
+We consider the original GAG data at end. 
+
+## Modeling 
+
+The GAG decreases as children grown. 
+However, the decreasing is not linear and we will start by 
+considering a parametric non-linear function. 
+Even thou, we fit the linear model for comparison pourpose. 
+
+In the linear case we have
+\begin{align} 
+y \sim N(\alpha_l + \beta_l x, \tau^{-1}_l)
+\end{align}
+where $\beta_l$ and $\beta_l$ are the intercept and regression coefficient, 
+or fixed effects and $\sigma^2_l$ is the likelhood variance, 
+commonly named as the variance of the residuals. 
+This model is fitted with the following code:
+```{r l}
+lin <- inla(y ~ x, data=dat, control.predictor=list(compute=TRUE))
+```
+
+We can see the summary of the posterior marginal distribution for 
+each regression parameter with 
+```{r fix}
+round(lin$summary.fixed, 3)
+```
+
+In the non-linear case we have 
+\begin{align} 
+y \sim N(\alpha + \beta\frac{\textrm{x}^k}{\textrm{x}^k+a^k}, \tau^{-1})
+\end{align}
+where $\alpha$ is the intercept. The
+$\beta$, $k$ and $a$ are the scaling, shape and halflife parametes 
+are the three parameters of the non-linear function assumed. 
+These parameters are treated as hyperparameters. 
+This model is fitted with the following code:
+```{r lsummary}
+nlin <- inla(y ~ f(x, model='sigm'), data=dat, 
+             control.predictor=list(compute=TRUE), 
+             control.compute=list(config=TRUE))
+```
+where the last line will be useful later. 
+
+We can see the summary of the posterior marginal for the intercept with 
+```{r nlsummaryf}
+round(nlin$summary.fixed, 3)
+```
+and the summary of the posterior marginal for the hyperparameters with 
+```{r nlsummaryh}
+round(nlin$summary.hyperpar, 3)
+```
+
+Whe asked \texttt{inla()} to compute the predictor. 
+It means that the posterior marginal of E($y|x$) are computed. 
+We can visualize the mean and the quantiles 2.5% and 97.5% 
+considering both fitted models with: 
+```{r ey, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
+plot(dat, pch=19, col=gray(.5), xlab='Age (years)', 
+     ylab='log of GAG concentration')
+for (j in c(1, 3, 5)) {
+  lines(dat$x, lin$summary.fitted.val[,j], col=2, lty=c(1,NA,2,NA,2)[j])
+  lines(dat$x, nlin$summary.fitted.val[,j], col=4, lty=c(1,NA,2,NA,2)[j])
+}
+```
+
+The mean and quantiles of E($y|x$) shown in the previous figure 
+shows that the linear model is not good for this data. 
+The non-linear performed better, even thou it seems to be overestimating 
+at the end of the period. 
+
+One important point in this figure is about the credibility band shown 
+as dashed lines. These are the 95% credible interval for E($y|x$). 
+Thus, not for $y$ given $x$ rather than for its expected value. 
+
+## Response prediction
+
+This maybe of interest to estimat 95% credible intervals for $y$ 
+as it can be useful for stablishing the limits of what is considered 
+to be normal for a children at a given age. 
+
+We can do it in INLA by considering Monte Carlo samples from the 
+fitted posterior distribution. 
+The procedure is to use the \texttt{inla.posterior.sample()} function 
+to sample from the E($y|x$) and $\sigma^2$ and use these samples 
+to sample from the distribution of $y|x$. 
+
+The \texttt{inla.posterior.sample()} function perform the simulation 
+in two steps. First, sample the hyperparameters configuration, 
+from those considered in the integration step in the INLA algorithm. 
+Since we have a discrete number of configurations, 
+it just considers the posterior probability of each configuration. 
+Them, sample the latent Gaussian field, which includes E($y|x$). 
+Them it samples the latent Gaussian field, which includes E($y|x$), 
+conditional on the sampled hyperparameter configuration. 
+
+By default, these configurations are not returned in the 
+\texttt{inla()} output. Thus, we asked it to be computed when 
+setting \texttt{control.compute=list(config=TRUE)} when 
+fitting the non-linear model. 
+Now, we just use it as
+
+```{r postsample}
+samples <- inla.posterior.sample(n=1000, result=nlin)
+```
+
+The output from \texttt{inla.posterior.sample()} is a list where 
+each element contains one sampled hyperparameter configuration 
+and the latent Gaussian field sampled conditional on it. 
+In the non-linear model we have four hyperparameters, 
+the likelihood hyperparameter (the precision) $\tau$ and the three 
+parameters of the non-linear function:  $\beta$, $k$ and $a$.  
+```{r s1}
+str(samples[[1]])
+```
+
+The sampled latent Gaussian field includes 
+E($y|x$) at the first $n$ of its elements. 
+We can sample from $y$ using these samples drawn for E($y|x$) and 
+$\tau$. In order to do this we build a function for this 
+```{r ysample}
+ysampler <- function(s) 
+  rnorm(n, s$latent[1:n], sqrt(1/s$hyperpar[1]))
+str(ysampler(samples[[1]]))
+```
+and apply to each sample we have with 
+```{r ysamples}
+ysamples <- sapply(samples, ysampler)
+str(ysamples)
+```
+
+We can now consider these samples to build a 95% credibility band 
+for the log of GAG as a function of age by taking quantiles from the 
+sampled $y$ as follows 
+```{r yband}
+qy <- apply(ysamples, 1, quantile, c(0.025, 0.975))
+```
+This band can be visualized with the following code:
+```{r lband, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
+plot(dat, pch=19, col=gray(.5), xlab='Age (years)', 
+     ylab='log of GAG concentration')
+lines(dat$x, qy[1,], lty=2)
+lines(dat$x, qy[2,], lty=2)
+```
+
+Transforming back in the original scale these quantiles we have
+```{r band, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
+plot(GAGurine, pch=19, col=gray(.5), xlab='Age (years)', 
+     ylab='GAG concentration')
+lines(dat$x, exp(qy[1,]), lty=2)
+lines(dat$x, exp(qy[2,]), lty=2)
+```
+
+In the performed procedure we have sampled $y$ from the model for each 
+observed age in the data. The band limits are not smooth due to the 
+randomness in this procedure. 
+
+### Prediction scenario 
+
+Most of the time a scenario is set for prediction. 
+In our example, we can predict for a set of equaly spaced ages, 
+for example, from 0 to 18 equally spaced by 0.5. 
+
+As we have Monte Carlo samples from the model parameters, 
+we can compute E($y|x$) on a set of values of $x$ 
+considering these samples and them sample $y$ considering $\tau$. 
+
+```{r y0s, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
+age0 <- 0:36/2
+j <- grep('(Intercept)', rownames(samples[[1]]$latent))
+sigmf <- function(x, bak) bak[1]*x^bak[3]/(x^bak[3] + bak[2]^bak[3]) 
+y0s <- sapply(samples, function(s) 
+  rnorm(length(age0), 
+        s$latent[j] + sigmf(age0, s$hyperpar[2:4]), 
+        sqrt(1/s$hyperpar[1])))
+q0 <- exp(apply(y0s, 1, quantile, c(0.025, 0.975)))
+plot(GAGurine, pch=19, col=gray(.5), log='y', 
+     xlab='Age (years)', ylab='Childrens GAG concentration')
+lines(age0, q0[1,])
+lines(age0, q0[2,])
+```
+
+## Considering randowm walk prior 
+
+The parametric non-linear function fitted seems to be missing too much points 
+after the age of 15 because the lower bound of the credibility band is too high. 
+An alternative is to consider a non-parametric curve. 
+
+```{r rw2, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
+rrw2 <- inla(y ~ f(inla.group(x), model='rw2'), data=dat, 
+             control.predictor=list(compute=TRUE), 
+             control.compute=list(config=TRUE)) 
+samples2 <- inla.posterior.sample(n=1000, res=rrw2) 
+ysamples2 <- sapply(samples2, ysampler)
+q2 <- apply(ysamples2, 1, quantile, c(0.025, 0.975))
+plot(GAGurine, pch=19, col=gray(.5), log='y', 
+     xlab='Age (years)', ylab='GAG concentration')
+lines(dat$x, exp(q2[1,]), lty=2)
+lines(dat$x, exp(q2[2,]), lty=2)
+```
+
+This approach seems to fit better the data. However, when fitting 
+the Rw2 on the knots considered by the \texttt{inla.group()} function, 
+it is assumed a piece-wise constant effect. 
+It can be seen in the begin of the curves, when it decreases faster. 
+
+A better approach is to consider a continuous function of this type. 
+
+## Considering 1 dimensional SPDE
+
+We now consider the SPDE approach in order to build a non-linear function. 
+We consider the Age as the support continuous one-dimensional domain. 
+
+We build a mesh and the SPDE model as follows
+```{r spde1d}
+mesh <- inla.mesh.1d(0:19)
+spde <- inla.spde2.pcmatern(
+  mesh, alpha=2, prior.range = c(1,0.01), prior.sigma = c(1, 0.01))
+```
+
+We have to organize the data considering the \texttt{inla.stack()} function as follows:
+```{r stack}
+sdat <- inla.stack(tag='ldata', 
+                   data=list(y=dat$y), 
+                   effects=list(list(alpha=rep(1, n)), 
+                                s=1:spde$n.spde), 
+                   A=list(1, inla.spde.make.A(mesh, dat$x)))
+```
+
+We them fit the model as follows, asking \texttt{inla()} to compute the 
+fitted values and to return the hyperparameters configurations:
+```{r sfit}
+sfit <- inla(y ~ f(s, model=spde), data=inla.stack.data(sdat), 
+             control.predictor=list(A=inla.stack.A(sdat), compute=TRUE), 
+             control.compute=list(config=TRUE))
+```
+
+We drawn samples from with 
+```{r ssamples}
+ssamples <- inla.posterior.sample(n=1000, result=sfit, add.names = FALSE)
+y.ssamples <- sapply(ssamples, ysampler) 
+s.qy <- apply(y.ssamples, 1, quantile, c(0.025, 0.975))
+```
+
+The band are visualized with 
+```{r sband, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
+plot(dat, pch=19, col=gray(.5), xlab='Age (years)', 
+     ylab='log of GAG concentration')
+lines(dat$x, s.qy[1,], lty=2)
+lines(dat$x, s.qy[2,], lty=2)
+```
+
+and in the original GAG scale with 
+```{r syband, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
+plot(GAGurine, pch=19, col=gray(.5), 
+     xlab='Age (years)', ylab='GAG concentration')
+lines(dat$x, exp(s.qy[1,]), lty=2)
+lines(dat$x, exp(s.qy[2,]), lty=2)
+```
+
+We have the latent field at a set of knots, the locations of the one-dimensional mesh. 
+This is enough to drawn the band at these knots. Thus we can use the samples of the 
+latent field at these knots, add the intercept and sample $y$. 
+```{r ksampler, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
+j <- grep('(Intercept)', rownames(ssamples[[1]]$latent))
+ssamples[[1]]$latent[c((j-mesh$n):(j-1), j),]
+y0.ssamples <- sapply(ssamples, function(s)
+  rnorm(mesh$n, 
+        s$latent[j] + s$latent[(j-mesh$n):(j-1)], 
+        sqrt(1/s$hyperpar[1])))
+q0s <- apply(y0.ssamples, 1, quantile, c(0.025, 0.975))
+plot(GAGurine, pch=19, col=gray(.5), log='y', 
+     xlab='Age (years)', ylab='GAG concentration')
+lines(mesh$loc, exp(q0s[1,]), lty=2)
+lines(mesh$loc, exp(q0s[2,]), lty=2)
+```
+
+## Considering the Gamma likelihood
+
+We have that 
+
+
+```{r py, eval=FALSE}
+sy <- sapply(post.s, function(s) {
+    b <- exp(-s$latent[1:nrow(GAGurine), 1]) * s$hyperpar[1]
+    a <- exp(s$latent[1:nrow(GAGurine), 1]) * b
+    rgamma(nrow(GAGurine), a, b)
+})
+qy <- t(apply(sy, 1, quantile, c(0.025, 0.975)))
+
+summary(qy)
+
+plot(GAGurine)
+lines(GAGurine$Age, qy[,1], lty=3, col=4, lwd=4)
+lines(GAGurine$Age, qy[,2], lty=3, col=4, lwd=4)
+
+```

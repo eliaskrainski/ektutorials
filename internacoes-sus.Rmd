@@ -1,0 +1,142 @@
+---
+title: "Descrição dos dados de internações"
+author: "Elias T. Krainski"
+date: "Outubro, 2018"
+output: pdf_document
+bibliography: referencias.bib 
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE)
+library(ggplot2)
+```
+
+# Resumo 
+
+Obtemos dados de internações pelo Sistema Único de Saúde - SUS no 
+estado do Paraná em Junho de 2018. 
+Importamos esses dados e fazemos alguns gráficos e tabela. 
+
+## Obtendo e importando os dados 
+
+Vamos considerar os dados de internações no estado do Paraná em Junho de 2018. 
+Esses dados são publicamente disponibilizados pelo departamento de informática 
+dos Sistema Único de Saúde, o DATASUS. 
+Indicamos a seguir o link direto para os dados de Junho de 2018, 
+como obter esses dados e importar no ambiente **R**, @R.
+
+Observe que ou fazemos o download do arquivo em formato _dbc_, 
+se o mesmo ainda não existir no diretório atual, 
+importamos esse arquivo com a função _read.dbc()_, do pacote **read.dbc**, @readdbc, 
+e exportamos os dados em formato _RData_, 
+ou importamos este último. 
+
+```{r dados}
+periodo <- '1807' ### ano 2018 e mes Julho
+dfile <- paste0('RDPR', periodo, '.dbc')
+rfile <- paste0("RDPR", periodo, '.RData')
+if (file.exists(rfile)) {
+  load(rfile) 
+} else {
+  library(read.dbc)
+  if (!file.exists(dfile)) {
+    u <- paste0('ftp://ftp.datasus.gov.br/dissemin/publicos/', 
+                'SIHSUS/200801_/dados/', dfile) 
+    download.file(u, dfile) 
+  }
+  d <- read.dbc(dfile) 
+  save('d', file=rfile) 
+}
+dim(d)
+```
+
+Há `r ncol(d)` colunas nesses dados representando as 
+informaçõe de `r nrow(d)` ocorridas no Paraná em Junho de 2018. 
+
+## Summário inicial e tabela
+
+Podemos, por exemplo, ver um sumário do valor total para cada uma 
+e somar esse valor para todas as internações com os comandos a seguir:
+
+```{r sumario}
+summary(d$VAL_TOT)
+sum(d$VAL_TOT)
+```
+
+Podemos fazer uma tabela de frequencias para saber 
+a distribuição quanto à gênero e raça/cor. Para isso 
+usamos a função _table()_ considerando as variáveis 
+**SEXO** e **RACA_COR** e visualizamos na Tabela \ref{tab:sexo}:
+
+```{r sexo}
+kable(table(d$SEXO, d$RACA_COR), caption='\\label{tab:sexo}Tabela de frequencias por sexo e raça/cor.')
+```
+
+## Gráfico de caixa 
+
+Um gráfico bastante simples para uma variável quantitativa é o gráfico de caixa, 
+ou _box-plot_. 
+Esse gráfico ser constuido por categorias de uma variável categórica, 
+permitindo visualizar relação entre uma variável quantitativa 
+e uma qualitativa, como exemplificado a seguir.
+
+```{r boxplot, fig.height = 3, out.width="80%", fig.align='center', fig.pos='h'}
+par(mfrow=c(2,1), mar=c(0,3,0.1,0.5), mgp=c(2,0.7,0), las=1)
+with(d, boxplot(IDADE~SEXO, horizontal=TRUE, axes = FALSE, 
+                xlab='Idade (anos)')); box()
+axis(2, 1:2, c('Fem', 'Masc'))
+par(mar=c(3,3,0.0,0.5))
+with(d, boxplot(IDADE, horizontal=TRUE, width = 1, xlab='Idade (anos)'))
+axis(2, 1, 'Todos')
+```
+
+
+## Histograma e respectiva tabela de frequencias
+
+Vamos fazer uma figura do histograma da idade dos pacientes. 
+Vemos esse histograma na Figura \ref{fig:hist}. 
+
+```{r hist, out.width="80%", fig.width=7, fig.height=3.7, fig.cap="\\label{hist}Histograma padrão usando função `hist()`.", fig.align='center', fig.pos='h'}
+par(mar=c(2.5,2.5,0.5,0.5), mgp=c(1.5,0.5,0)) 
+h <- hist(d$IDADE, main='', xlab='Idade (anos)', ylab='Frequencia', col=gray(.9))
+j <- which.max(h$counts)
+```
+
+A classe de idade com maior frequencia é a faixa com idade 
+entre `r h$breaks[j]` e `r h$breaks[j+1]` anos, 
+com um total de `r h$counts[j]` pacientes nessa faixa etária. 
+
+O _package_ **ggplot2**, @ggplot2, tem sido bastante utilizado atualmente 
+para fazer gráficos. 
+Um histograma feito com esse pacote pode ser visto na Figura \ref{fig:histogram}. 
+
+
+```{r histogram, out.width="80%", fig.width=7, fig.height=3.7, fig.cap="Histograma com o pacote **ggplot2**.", message=FALSE, fig.align='center', fig.pos='h'}
+ggplot(data=d['IDADE']) + geom_histogram(aes(IDADE))
+```
+
+## Tabela de frequencias de variável quantitativa contínua
+
+Os dados são categorizados para serem visualizados em histograma.  
+Assim, o objeto _h_ contém elementos da 
+tabela de frequencias desses dados categorizados. 
+Essa tabela é construida com os comandos a seguir e 
+organizada na Tabela \ref{freqtab}. 
+
+```{r kable}
+tab <- data.frame(Frequencia=h$counts)
+rownames(tab) <- paste(h$breaks[-length(h$breaks)], "|--", h$breaks[-1])
+tab$'Percentual (%)' <- round(100*prop.table(tab$Frequencia), 2)
+kable(tab, caption="\\label{freqtab}Tabela de frequencias.")
+```
+
+## Custo total por permanência
+
+```{r custop, out.width="99%", fig.width=10, fig.height=5}
+table(perm <- cut(d$DIAS_PERM, c(0,1,2,3,4,5,7,15,30,Inf), right=FALSE))
+with(d, plot((VAL_TOT+0.1)~perm, xlab="Dias de permanência", ylab="Valor total", log="y"))
+abline(h=c(1, 10, 100, 1000, 10000), lty=3)
+```
+
+## Referências 

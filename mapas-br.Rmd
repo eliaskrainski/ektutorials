@@ -1,0 +1,194 @@
+---
+title: "Trabalhando com mapas do Brasil"
+author: "Elias T. Krainski"
+date: "Outubro, 2018"
+output: pdf_document
+bibliography: referencias.bib 
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE)
+library(rgdal)
+library(spdep)
+library(INLA)
+```
+
+# Resumo 
+
+Obtemos mapas oficiais do Brasil dividido por municípios, 
+definimos o grafo de vizinança e simulamos de um modelo espacial. 
+
+## Obtendo e importando o mapa
+
+No link [http://geoftp.ibge.gov.br/organizacao_do_territorio/malhas_territoriais/]
+estão disponíveis mapas oficiais da divisão territorial Brasileira 
+desde o ano de 1872. 
+Vamos considerar o mapa do Paraná subdividido por municípios considerando 
+a divisão de 2017. 
+
+Observe que ou fazemos o download do arquivo compactado, 
+se o mesmo ainda não existir no diretório atual, 
+descompactamos esse arquivo e 
+importamos o _shapefile_ com a divisão por municípios usando 
+_readOGR()_, do pacote **rgdal**, @rgdal, 
+e exportamos os dados em formato _RData_, 
+ou importamos este último. 
+
+```{r dados, resul='hide'}
+u0 <- paste0('http://geoftp.ibge.gov.br/organizacao_do_territorio/', 
+             'malhas_territoriais/malhas_municipais/municipio_2017/UFs/PR/')
+cfile <- 'pr_municipios.zip'
+rfile <- 'prmun.RData'
+if (file.exists(rfile)) {
+  load(rfile) 
+} else {
+  library(rgdal)
+  if (!file.exists(cfile)) {
+    download.file(paste0(u0, cfile), cfile)
+  }
+  unzip(cfile)
+  prmuns <- readOGR('.', '41MUE250GC_SIR') 
+  save('prmuns', file=rfile) 
+}
+```
+
+Há `r nrow(prmuns)` areas nesse mapa e podemos 
+visualizar esse mapa com 
+
+```{r mapa, out.width="99%", fig.align='center', fig.pos='h'}
+par(mar=c(0,0,0,0))
+plot(prmuns)
+```
+
+Nós vamos fazer visualizações e para que fique mais didático vamos 
+considerar apenas os municípios com centroide a menos de 70 kilômetros 
+do centroide de Guaratuba. 
+Inicialmente, calculamos a distância (em km) 
+de cada município a Guaratuba:
+
+```{r headd}
+head(prmuns@data, 3)
+ig <- which(prmuns@data$NM_MUNICIP=='GUARATUBA')
+ce <- coordinates(prmuns)
+dist.g <- spDistsN1(ce, ce[ig, ], longlat=TRUE)
+summary(dist.g) 
+```
+
+Agora, selecionamos aqueles com distância menor que 70 kilometors: 
+
+```{r micro}
+ii <- which(dist.g<70)
+mapa <- prmuns[ii, ]
+```
+
+## Vizinhança 
+
+A lista de vizinhança pode ser obtida usando a função `poly2nb()`
+do pacote **spdep**, @spdep. 
+
+```{r viz}
+library(spdep)
+viz <- poly2nb(mapa)
+viz
+```
+
+O grafo da vizinhança pode ser visualizado sobre o mapa e 
+com adição dos respectivos nomes usando:
+
+```{r vizplot, out.width="99%", fig.align='center', fig.pos='h'}
+par(mar=c(0,0,0,0))
+plot(mapa, border=gray(.5))
+ce.mapa <- ce[ii, ]
+plot(viz, ce.mapa, add=TRUE, points=FALSE) 
+text(ce.mapa[,1], ce.mapa[,2], mapa$NM_MUNICIP, cex=0.5, col='blue') 
+```
+
+
+## Definindo modelos espaciais 
+
+O modelo de Besag mais simples é definido por distribuições condicionais da forma 
+$$x_i | \mathbf{x}_{-i} \sim \textrm{Normal}(m_i, v_i)$$ 
+em que $\mathbf{x}_{-i}$ é o vetor $\mathbf{x}$ sem a posição $i$.
+
+- $m_i = \sum_{j\sim i}x_j/n_i$ em que 
+    - $j\sim i$ indica o conjunto de áreas vizinhas da área $i$
+    - $n_i$ é o número de vizinhos da área $i$
+
+- $v_i = \frac{1}{n_i\tau}$
+    - variância condicional é inversamente proporcinal ao número de vizinhos
+    - $\tau$ é um parâmetro de precisão condicional/local
+
+Esse conjunto de distribuições condicionais induz uma distribuição 
+conjunta intrinsica para o vetor $\mathbf{x}$:
+\[
+\mathbf{x} \sim \textrm{Normal}(\mathbf{0}, \mathbf{Q}^{-})\;.
+\]
+em que $\mathbf{Q}^{-}$ é a inversa generalizada de $\mathbf{Q}$. 
+
+O ingrediente principal desta distribuição é a matriz de precisão 
+dada por 
+$$\mathbf{Q} = \tau \mathbf{R}$$ 
+onde 
+
+\[
+R_{ij} = \left\{ \begin{array}{rl} 
+ n_i, & \textrm{ se } i=j \\
+ -1, & \textrm{ se } i\sim j \\
+ 0, & \textrm{ caso contrario}
+ \end{array} \right.
+\]
+
+Podemos construir $\mathbf{R}$ a partir da matriz de vizinhanças com 
+
+```{r R}
+ni <- card(viz)
+n <- length(ni)
+library(Matrix)
+grafo <- sparseMatrix(i=rep(1:n, ni), j=unlist(viz))
+R <- Diagonal(x=ni) - grafo
+image(R, scales=list(y=list(at=1:nrow(R), label=mapa$NM_MUNICIP)))
+```
+
+
+## Simulando do modelo 
+
+Falta ainda definir o valor de $\tau$ de forma a 
+completar a definição do modelo. 
+Recomendamos fortemente escalonar a matriz $\mathbf{R}$
+para que em vez de parametrizar $\tau$ usar um parâmetro 
+de variância marginal, conforme sugerido em @soorbyeR:2015 
+para o modelo de Besag e utilizado em @riebleretal:2016 
+para uma reparametrização do modelo de Besag-York-Mollié, @besagYM:1991. 
+
+Para a simulação, vamos considerar o mapa do estado do Paraná. 
+
+```{r prR}
+viz <- poly2nb(prmuns)
+ni <- card(viz)
+n <- length(ni)
+grafo <- sparseMatrix(i=rep(1:n, ni), j=unlist(viz))
+R <- Diagonal(x=ni) - grafo
+```
+
+Fazemos isso a seguir, considerando a restrição de soma zero.
+
+```{r Rscale, out.width="99%", fig.align='center', fig.pos='h'}
+constr0 <- list(A=matrix(1, 1, n), e=0)
+library(INLA)
+Rscale <- inla.scale.model(R, constr=constr0)
+tau.m <- 4
+x <- inla.qsample(Q = tau.m * Rscale + Diagonal(n, 1e-5), 
+                  constr = constr0)
+
+library(viridisLite)
+cores <- viridis(n)
+
+par(mar=c(0,0,0,0))
+plot(prmuns, col=cores[rank(x)]) 
+q <- quantile(x, 0:7/7)
+library(maptools)
+legend('topright', format(q, digits=2), fill=viridis(8))
+```
+
+## Referências 

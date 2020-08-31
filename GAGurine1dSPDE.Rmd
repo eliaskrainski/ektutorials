@@ -181,22 +181,25 @@ We can now consider these samples to build a 95% credibility band
 for the log of GAG as a function of age by taking quantiles from the 
 sampled $y$ as follows 
 ```{r yband}
-qy <- apply(ysamples, 1, quantile, c(0.025, 0.975))
+qy <- apply(ysamples, 1, quantile, c(0.025, 0.5, 0.975))
 ```
 This band can be visualized with the following code:
 ```{r lband, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
 plot(dat, pch=19, col=gray(.5), xlab='Age (years)', 
      ylab='log of GAG concentration')
 lines(dat$x, qy[1,], lty=2)
-lines(dat$x, qy[2,], lty=2)
+lines(dat$x, qy[2,])
+lines(dat$x, qy[3,], lty=2)
 ```
 
 Transforming back in the original scale these quantiles we have
 ```{r band, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
-plot(GAGurine, pch=19, col=gray(.5), xlab='Age (years)', 
+plot(GAGurine, pch=19, col=gray(.5), log='y', 
+     xlab='Age (years)', 
      ylab='GAG concentration')
 lines(dat$x, exp(qy[1,]), lty=2)
-lines(dat$x, exp(qy[2,]), lty=2)
+lines(dat$x, exp(qy[2,]))
+lines(dat$x, exp(qy[3,]), lty=2)
 ```
 
 In the performed procedure we have sampled $y$ from the model for each 
@@ -214,18 +217,19 @@ we can compute E($y|x$) on a set of values of $x$
 considering these samples and them sample $y$ considering $\tau$. 
 
 ```{r y0s, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
-age0 <- 0:36/2
+x.i <- grep('x:', rownames(samples[[1]]$latent))
 j <- grep('(Intercept)', rownames(samples[[1]]$latent))
-sigmf <- function(x, bak) bak[1]*x^bak[3]/(x^bak[3] + bak[2]^bak[3]) 
+age0 <- nlin$summary.random$x$ID
 y0s <- sapply(samples, function(s) 
   rnorm(length(age0), 
-        s$latent[j] + sigmf(age0, s$hyperpar[2:4]), 
+        s$latent[j,1] + s$latent[x.i, 1],
         sqrt(1/s$hyperpar[1])))
-q0 <- exp(apply(y0s, 1, quantile, c(0.025, 0.975)))
-plot(GAGurine, pch=19, col=gray(.5), log='y', 
+q0 <- exp(apply(y0s, 1, quantile, c(0.025, 0.5, 0.975)))
+plot(GAGurine, pch=19, col=gray(.5), log='y',
      xlab='Age (years)', ylab='Childrens GAG concentration')
-lines(age0, q0[1,])
+lines(age0, q0[1,], lty=2)
 lines(age0, q0[2,])
+lines(age0, q0[3,], lty=2)
 ```
 
 ## Considering randowm walk prior 
@@ -240,11 +244,12 @@ rrw2 <- inla(y ~ f(inla.group(x), model='rw2'), data=dat,
              control.compute=list(config=TRUE)) 
 samples2 <- inla.posterior.sample(n=1000, res=rrw2) 
 ysamples2 <- sapply(samples2, ysampler)
-q2 <- apply(ysamples2, 1, quantile, c(0.025, 0.975))
+qy.rw2 <- apply(ysamples2, 1, quantile, c(0.025, 0.5, 0.975))
 plot(GAGurine, pch=19, col=gray(.5), log='y', 
      xlab='Age (years)', ylab='GAG concentration')
-lines(dat$x, exp(q2[1,]), lty=2)
-lines(dat$x, exp(q2[2,]), lty=2)
+lines(dat$x, exp(qy.rw2[1,]), lty=2)
+lines(dat$x, exp(qy.rw2[2,]))
+lines(dat$x, exp(qy.rw2[3,]), lty=2)
 ```
 
 This approach seems to fit better the data. However, when fitting 
@@ -258,36 +263,49 @@ A better approach is to consider a continuous function of this type.
 
 We now consider the SPDE approach in order to build a non-linear function. 
 We consider the Age as the support continuous one-dimensional domain. 
+Will have 
+\[\eta_i = \alpha + \mathbf{A}_i \mathbf{s} \]
+where $\mathbf{s}$ is a smooth function of age. 
+and $\mathbf{A}$ maps this function to the 
+age of the individual $i$. 
 
 We build a mesh and the SPDE model as follows
 ```{r spde1d}
 mesh <- inla.mesh.1d(0:19)
 spde <- inla.spde2.pcmatern(
-  mesh, alpha=2, prior.range = c(1,0.01), prior.sigma = c(1, 0.01))
+  mesh, alpha=2, 
+  prior.range = c(1,0.01), 
+  prior.sigma = c(1, 0.01))
 ```
 
 We have to organize the data considering the \texttt{inla.stack()} function as follows:
 ```{r stack}
-sdat <- inla.stack(tag='ldata', 
-                   data=list(y=dat$y), 
-                   effects=list(list(alpha=rep(1, n)), 
-                                s=1:spde$n.spde), 
-                   A=list(1, inla.spde.make.A(mesh, dat$x)))
+A <- inla.spde.make.A(mesh, dat$x)
+sdat <- inla.stack(
+  tag='ldata', 
+  data=list(y=dat$y), 
+  effects=list(list(alpha=rep(1, n)), 
+                    s=1:spde$n.spde), 
+  A=list(1, A))
 ```
 
 We them fit the model as follows, asking \texttt{inla()} to compute the 
 fitted values and to return the hyperparameters configurations:
 ```{r sfit}
-sfit <- inla(y ~ f(s, model=spde), data=inla.stack.data(sdat), 
-             control.predictor=list(A=inla.stack.A(sdat), compute=TRUE), 
+sfit <- inla(y ~ 0 + alpha + f(s, model=spde), 
+             data=inla.stack.data(sdat), 
+             control.predictor=list(
+               A=inla.stack.A(sdat), 
+               compute=TRUE), 
              control.compute=list(config=TRUE))
 ```
 
 We drawn samples from with 
 ```{r ssamples}
-ssamples <- inla.posterior.sample(n=1000, result=sfit, add.names = FALSE)
+ssamples <- inla.posterior.sample(
+  n=1000, result=sfit, add.names = FALSE)
 y.ssamples <- sapply(ssamples, ysampler) 
-s.qy <- apply(y.ssamples, 1, quantile, c(0.025, 0.975))
+s.qy <- apply(y.ssamples, 1, quantile, c(0.025, 0.5, 0.975))
 ```
 
 The band are visualized with 
@@ -295,51 +313,81 @@ The band are visualized with
 plot(dat, pch=19, col=gray(.5), xlab='Age (years)', 
      ylab='log of GAG concentration')
 lines(dat$x, s.qy[1,], lty=2)
-lines(dat$x, s.qy[2,], lty=2)
+lines(dat$x, s.qy[2,])
+lines(dat$x, s.qy[3,], lty=2)
 ```
 
 and in the original GAG scale with 
 ```{r syband, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
-plot(GAGurine, pch=19, col=gray(.5), 
+plot(GAGurine, pch=19, col=gray(.5), log='y',
      xlab='Age (years)', ylab='GAG concentration')
 lines(dat$x, exp(s.qy[1,]), lty=2)
-lines(dat$x, exp(s.qy[2,]), lty=2)
+lines(dat$x, exp(s.qy[2,]))
+lines(dat$x, exp(s.qy[3,]), lty=2)
 ```
 
 We have the latent field at a set of knots, the locations of the one-dimensional mesh. 
 This is enough to drawn the band at these knots. Thus we can use the samples of the 
 latent field at these knots, add the intercept and sample $y$. 
 ```{r ksampler, fig.width=10, fig.height=4, out.width="99%", small.mar=TRUE}
-j <- grep('(Intercept)', rownames(ssamples[[1]]$latent))
+j <- grep('alpha', rownames(ssamples[[1]]$latent))
 ssamples[[1]]$latent[c((j-mesh$n):(j-1), j),]
 y0.ssamples <- sapply(ssamples, function(s)
   rnorm(mesh$n, 
         s$latent[j] + s$latent[(j-mesh$n):(j-1)], 
         sqrt(1/s$hyperpar[1])))
-q0s <- apply(y0.ssamples, 1, quantile, c(0.025, 0.975))
+q0s <- apply(y0.ssamples, 1, quantile, c(0.025, 0.5, 0.975))
 plot(GAGurine, pch=19, col=gray(.5), log='y', 
      xlab='Age (years)', ylab='GAG concentration')
 lines(mesh$loc, exp(q0s[1,]), lty=2)
-lines(mesh$loc, exp(q0s[2,]), lty=2)
+lines(mesh$loc, exp(q0s[2,]))
+lines(mesh$loc, exp(q0s[3,]), lty=2)
 ```
 
 ## Considering the Gamma likelihood
 
-We have that 
+We have that GAG is a positive outcome. 
+One popular statistical distribution 
+for this kind of data is the Gamma. 
+In the Gamma likelihood, the mean is 
+$E(y_i) = a_i/b_i = \mu_i$ and 
+the variance is $V(y_i) = a_i/b_i^2 = \mu_i^2/\phi$, 
+where $\phi$ is a precision parameter.
 
+Then it is necessary to define a model for 
+the linear predictor $\eta_i = \log(\mu_i)$.
+We follows the later example for $\eta_i$
 
-```{r py, eval=FALSE}
-sy <- sapply(post.s, function(s) {
+```{r gstack}
+gdat <- inla.stack(
+  tag='gag', 
+  data=list(y=GAGurine$GAG), 
+  effects=list(list(alpha=rep(1, n)), 
+                    s=1:spde$n.spde), 
+  A=list(1, A)) 
+```
+
+```{r gfit}
+gfit <- inla(y ~ 0 + alpha + f(s, model=spde), 
+             data=inla.stack.data(gdat), 
+             family='gamma',
+             control.predictor=list(
+               A=inla.stack.A(gdat), 
+               compute=TRUE), 
+             control.compute=list(config=TRUE))
+```
+
+```{r py, eval=TRUE}
+post.g <- inla.posterior.sample(1000, gfit)
+gy <- sapply(post.g, function(s) {
     b <- exp(-s$latent[1:nrow(GAGurine), 1]) * s$hyperpar[1]
     a <- exp(s$latent[1:nrow(GAGurine), 1]) * b
     rgamma(nrow(GAGurine), a, b)
 })
-qy <- t(apply(sy, 1, quantile, c(0.025, 0.975)))
+qy.g <- apply(gy, 1, quantile, c(0.025, 0.5, 0.975))
 
-summary(qy)
-
-plot(GAGurine)
-lines(GAGurine$Age, qy[,1], lty=3, col=4, lwd=4)
-lines(GAGurine$Age, qy[,2], lty=3, col=4, lwd=4)
-
+plot(GAGurine, log='y')
+lines(GAGurine$Age, qy.g[1,], lty=2)
+lines(GAGurine$Age, qy.g[2,]) 
+lines(GAGurine$Age, qy.g[3,], lty=2)
 ```

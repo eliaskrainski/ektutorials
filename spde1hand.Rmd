@@ -1,0 +1,322 @@
+---
+title: "Hand code on 1d SPDE"
+author: "Elias T Krainski"
+date: "September 2020"
+output: html_document
+bibliography: references.bib 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(INLA)
+```
+
+## Abstract
+
+The aim of this tutorial covers three points. 
+First is to define a SPDE model in INLA for 
+one dimentional case. 
+Second, is to perform Kriging using precision matrices. 
+And, the third point is showing results 
+considering two different set of basis functions chosen. 
+Notice that this is just an illustration
+and not how to proper do the analysis. 
+
+## Introduction 
+
+We consider the data analysied 
+in the Gaussian Process example 
+[here](https://people.bath.ac.uk/jjf23/brinla/gpreg.html). 
+
+```{r data}
+data(fossil, package='brinla')
+fossil$sr <- (fossil$sr-0.7)*100
+head(fossil, 3)
+``` 
+
+Selecting part of the data (shown in red)
+```{r select}
+set.seed(1)
+isampl <- sort(sample(1:nrow(fossil), 30))
+is.sel <- (1:nrow(fossil))%in%isampl
+par(mar=c(2,3,0.5,0.5), mgp=c(2,0.5,0), las=1)
+plot(fossil, pch=19, las=1, col=is.sel+1) 
+fossil0 <- fossil
+fossil <- fossil[isampl, ]
+``` 
+
+Define a grid over age, the set of knots for 
+the basis functions. 
+
+```{r knots}
+range(fossil$age)
+knots <- 2*(45:63) ## 90:125
+length(knots)
+```
+
+The data model is of the following form 
+\[y_i = \alpha + u_i + e_i \]
+where $\alpha$ is the intercept, 
+$u_i$ is the random field at the age 
+for observation $i$, and $e_i$ is an 
+independent error.
+
+We re-write it in matrix formula as 
+\[ \mathbf{y} = \mathbf{1} \alpha + \mathbf{A}\mathbf{u} + \mathbf{e} \]
+where the vector $\mathbf{u}$ is the value of the 
+random field at a set of knots placed over the range of age 
+and $\mathbf{A}$ is a projector matrix. 
+$\mathbf{A}$ projects the random field, 
+modeled at the knots to the age of each observation. 
+
+## The conditional mean (Kriging)
+
+We consider $\alpha \sim N(0, 0^{-1})$, 
+and $\mathbf{u} \sim N(\mathbf{0}, \mathbf{Q}_u^{-1})$, 
+where $\mathbf{Q}_u$ is defined later. 
+
+All we want to compute here is the conditional mean and 
+variance of $\alpha$ and $\mathbf{u}$, conditional 
+on the assumed prior distributions and the data $\mathbf{y}$. 
+We can perform this following the Finn's material on GMRF 
+[here](https://www.maths.ed.ac.uk/~flindgre/tmp/gmrf.pdf). 
+
+We define $\mathbf{x} = \{\alpha, \mathbf{u}\}$, 
+so that we have 
+\[ 
+\mathbf{Q}_x = \left[ 
+\begin{array} {cc}
+0 & 0 \\
+0 & Q_u 
+\end{array} \right] 
+\]
+
+Thus, we have
+\[ \mathbf{x}|\mathbf{y},\theta \sim 
+N(\mathbf{\mu}_{x|y,\theta}, 
+\mathbf{Q}_{x|y,\theta}^{-1}) \]
+where 
+\[ \mathbf{Q}_{x|y,\theta} = 
+\mathbf{Q}_x + 
+\mathbf{A}^{T}\mathbf{Q}_e\mathbf{A}\] 
+and 
+\[ \mathbf{\mu}_{x|y,\theta} = 
+\mathbf{Q}_{x|y,\theta}^{-1}
+\mathbf{A}^{T}\mathbf{Q}_e\mathbf{y} 
+\;.\] 
+
+## One dimentional mesh 
+
+First we use the defined knots in the 
+`inla.mesh.1d()` to define the basis function setting. 
+
+```{r}
+m1 <- inla.mesh.1d(knots)
+str(m1)
+```
+
+Them we can use this to define $\mathbf{A}$ 
+
+```{r Ap}
+Ap <- inla.mesh.projector(
+    mesh=m1, loc=fossil$age)
+str(Ap)
+
+### or inla.spde.make.A(
+##      mesh=m1, loc=$fossil$age)
+A <- Ap$proj$A 
+
+dim(fossil)
+dim(A)
+```
+
+Showing $\mathbf{A}$ for some observations 
+```{r Afew}
+fossil$age[c(1,3,5)]
+A[c(1,3,5), 1:10]
+rowSums(A)
+```
+
+Visualizing the projector matrix (transposed)
+```{r a1plot, fig.width=5, fig.height=3}
+par(mar=c(0,0,0,0))
+image(t(A), xlab='', ylab='', sub='') 
+```
+
+## The precision matrix for $\mathbf{u}$
+
+We now have to define the precison of $\mathbf{u}$. 
+For $\alpha=2$
+\[\mathbf{Q}_2 = \tau^2 (\kappa^4 \mathbf{C} + 2\kappa^2\mathbf{G} + \mathbf{G}^{(2)})\]
+where these matrices $\mathbf{C}$, $\mathbf{G}$ 
+and $\mathbf{G}^{(2)}$ are defined in @lindgrenRL2011.
+
+The $\kappa$ parameter is related to the practical range 
+as $\kappa = \sqrt{8\nu}/\rho$ and 
+the marginal variance as 
+$\tau^2=\frac{\gamma(\nu)}
+{\gamma(\alpha)(4\pi)^{d/2}\kappa^{2\nu}\sigma_u^2}$, 
+@lindgrenR2015. 
+
+The practical range and the marginal variance parameters 
+are easier to undestand. 
+After some "discussion" we can take 
+$\sigma^2=0.5^2$ and $\rho=10$. 
+We consider $\alpha=\nu+1/2=2$, giving $\nu=1.5$. 
+
+```{r matrices}
+alpha <- 2
+d <- 1
+nu <- alpha - d/2
+rho <- 10
+s2u <- 0.5^2
+kappa <- sqrt(8*nu)/rho
+tau <- sqrt(gamma(nu)/(2*sqrt(pi)*kappa^(2*nu)*s2u))
+``` 
+
+We can use the `inla.mesh.fem()` function to compute 
+the matrices needed to build the precision matrix. 
+```{r fem}
+fe <- inla.mesh.fem(m1, order=2)
+qx <- tau^2*(kappa^4 * fe$c0 + 2*kappa^2*fe$g1 + fe$g2)
+image(qx)
+```
+
+Doing the same with the available functions in INLA
+```{r qx1again}
+spde1 <- inla.spde2.matern(
+  mesh=m1, alpha=2) 
+qx <- inla.spde2.precision(
+  spde=spde1, theta=log(c(tau, kappa))) 
+image(qx)
+```
+
+In addition, we have the noise variance error
+```{r}
+s2e <- 0.1^2
+qe <- Diagonal(nrow(fossil), 1/s2e)
+```
+
+We stack the matrices to compute the 
+conditional precision and mean
+
+```{r mat1}
+### XA = [1, A], in the material : BA
+XA <- cbind(1, A)
+
+### Qx = [ block diagonal ]
+Qx <- cbind(0, rbind(0, qx))
+dim(qx)
+dim(Qx)
+```
+
+The precision is 
+```{r prec1}
+Qx.y <- Qx + crossprod(XA, qe)%*%XA
+dim(Qx.y)
+```
+
+The conditional mean can be computed using 
+```{r mu1}
+mx.y <- drop(inla.qsolve(
+  Qx.y, crossprod(XA, qe)%*%fossil$sr))
+```
+
+The prediction can be computed, and visualized, with
+```{r ypred}
+plot(fossil)
+lines(fossil$age, drop(XA %*% mx.y))
+```
+
+The conditional variance standard error 
+```{r var1}
+Vx <- inla.qinv(Qx.y)
+v.x <- diag(Vx)
+s.x <- sqrt(v.x)
+```
+
+Adding the error in the plot
+```{r viz1}
+plot(fossil, las=1)
+lines(knots, mx.y[1]+mx.y[-1])
+lines(knots, mx.y[1]+mx.y[-1] - 1.96*s.x[-1], lty=2)
+lines(knots, mx.y[1]+mx.y[-1] + 1.96*s.x[-1], lty=2)
+```
+
+## Second order basis functions 
+
+The piecewise linear basis functions 
+is just one way to do do this 
+and there are several options to this. 
+A comparison among quite a few ones 
+was performed in @bolinL2011. 
+In general, one has to balance between the properties 
+of the chosen basis functions and how sparse 
+$\mathbf{Q}_{x} + \mathbf{A}^T\mathbf{Q}_e\mathbf{A}$ is.
+
+Next we do the same computations using 
+second order B-splines. 
+
+```{r A2}
+m2 <- inla.mesh.1d(knots, degree=2)
+str(m2)
+A2 <- inla.spde.make.A(
+    mesh=m2, loc=fossil$age)
+fossil$age[c(1,3,5)] 
+A2[c(1,3,5), 1:7]
+
+table(rowSums(A2))
+table(rowSums(A2>0))
+```
+
+We can visualize how the 2nd degree basis 
+functions are with 
+```{r viz2nd}
+loc0 <- seq(90, 125, 0.1)
+aplot <- inla.spde.make.A(
+    mesh=m2, loc=loc0)
+
+plot(loc0, aplot[,1], type='n')
+for (j in 1:ncol(aplot))
+    lines(loc0, aplot[,j])
+```
+
+Now we compute the conditional precision and mean again. 
+We will use the `inla.spde2.matern()` and 
+`inla.spde2.precision()` functions to help 
+building $\mathbf{Q}_x$ at this time
+```{r q2}
+spde2 <- inla.spde2.matern(
+  mesh=m2, alpha=2)
+q2x <- inla.spde2.precision(
+  spde=spde2, theta=log(c(tau, kappa)))
+### Qx
+Q2x <- cbind(0, rbind(0, q2x))
+
+XA2 <- cbind(1, A2)
+Q2x.y <- Q2x + crossprod(XA2, qe)%*%XA2
+
+m2x.y <- drop(inla.qsolve(
+  Q2x.y, crossprod(XA2, qe)%*%fossil$sr))
+
+## variance
+V2x <- inla.qinv(Q2x.y)
+v.x2 <- diag(V2x)
+s.x2 <- sqrt(v.x2)
+```
+
+We now visualize booth results 
+```{r viz2}
+plot(fossil0, pch=19, las=1, col=is.sel+1) 
+
+lines(knots, mx.y[1]+mx.y[-1])
+lines(knots, mx.y[1]+mx.y[-1] - 1.96*s.x[-1], lty=2)
+lines(knots, mx.y[1]+mx.y[-1] + 1.96*s.x[-1], lty=2)
+
+lines(m2$mid, m2x.y[1]+m2x.y[-1], col=2)
+lines(m2$mid, m2x.y[1]+m2x.y[-1] - 1.96*s.x2[-1], lty=2, col=2)
+lines(m2$mid, m2x.y[1]+m2x.y[-1] + 1.96*s.x2[-1], lty=2, col=2)
+```
+
+
+# References

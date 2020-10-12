@@ -19,11 +19,11 @@ library(INLA)
 
 Neste tutorial, obtemos mapas oficiais do Brasil 
 dividido por municípios, 
-definimos o grafo de vizinança e 
+definimos o grafo de vizinhança e 
 simulamos de um modelo espacial. 
 Ao final mostramos como fazer a lista de vizinhança 
 entre todos os municípios do Brasil ligando 
-também municípios sem vizinhos.
+também municípios sem vizinhos a municípios próximos.
 
 # Mapa 
 
@@ -82,6 +82,10 @@ if (file.exists(rpr)) {
 
 ## Inspeciona e plota 
 
+```{r insppr}
+dim(prmun)
+head(prmun@data, 3)
+```
 
 Há `r nrow(prmun)` areas nesse mapa e podemos 
 visualizar esse mapa com 
@@ -100,7 +104,6 @@ Inicialmente, calculamos a distância (em km)
 de cada município a Guaratuba:
 
 ```{r headd}
-head(prmun@data, 3)
 ig <- which(prmun@data$NM_MUN=='Guaratuba')
 ce <- coordinates(prmun)
 dist.g <- spDistsN1(ce, ce[ig, ], longlat=TRUE)

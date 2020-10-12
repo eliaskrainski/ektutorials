@@ -1,8 +1,11 @@
 ---
 title: "Trabalhando com mapas do Brasil"
 author: "Elias T. Krainski"
-date: "Outubro, 2018"
-output: pdf_document
+date: Criado em "Outubro, 2018", Atualizado em `r format(Sys.Date())`
+output: 
+  html_document:
+    toc: yes
+    toc_depth: '2'
 bibliography: references.bib 
 ---
 
@@ -14,18 +17,23 @@ library(spdep)
 library(INLA)
 ```
 
-# Resumo 
+Neste tutorial, obtemos mapas oficiais do Brasil 
+dividido por municípios, 
+definimos o grafo de vizinança e 
+simulamos de um modelo espacial. 
+Ao final mostramos como fazer a lista de vizinhança 
+entre todos os municípios do Brasil ligando 
+também municípios sem vizinhos.
 
-Obtemos mapas oficiais do Brasil dividido por municípios, 
-definimos o grafo de vizinança e simulamos de um modelo espacial. 
+# Mapa 
 
-## Obtendo e importando o mapa
+## Fonte de mapas oficiais
 
 No link [http://geoftp.ibge.gov.br/organizacao_do_territorio/malhas_territoriais/]
 estão disponíveis mapas oficiais da divisão territorial Brasileira 
 desde o ano de 1872. 
 Vamos considerar o mapa do Paraná subdividido por municípios considerando 
-a divisão de 2017. 
+a divisão de 2019. 
 
 Observe que ou fazemos o download do arquivo compactado, 
 se o mesmo ainda não existir no diretório atual, 
@@ -35,31 +43,55 @@ _readOGR()_, do pacote **rgdal**, @rgdal,
 e exportamos os dados em formato _RData_, 
 ou importamos este último. 
 
-```{r dados, resul='hide'}
-u0 <- paste0('http://geoftp.ibge.gov.br/organizacao_do_territorio/', 
-             'malhas_territoriais/malhas_municipais/municipio_2017/UFs/PR/')
-cfile <- 'pr_municipios.zip'
-rfile <- 'prmun.RData'
-if (file.exists(rfile)) {
-  load(rfile) 
+Inicialmente definimos o link do 
+arquivo com o shapefile compactado e 
+o arquivo local com o objeto em ambiente R.
+
+```{r download, results='hide'}
+u0 <- paste0(
+  'http://geoftp.ibge.gov.br/',
+  'organizacao_do_territorio/', 
+  'malhas_territoriais/malhas_municipais/')
+prdir <- 'municipio_2019/UFs/PR/'
+zpr <- 'pr_municipios.zip'
+rpr <- 'prmun.RData'
+```
+
+## Download e importação 
+
+Consideramos se o mapa já foi obtido e 
+importado para o R e o objeto em R salvo no arquivo 
+com extensão _.RData_. 
+Se não (primeira vez), faz o download 
+e carrega o shapefile com mapa em R.
+
+```{r loadpr}
+if (file.exists(rpr)) {
+  load(rpr) 
 } else {
   library(rgdal)
-  if (!file.exists(cfile)) {
-    download.file(paste0(u0, cfile), cfile)
+  if (!file.exists(zpr)) {
+    download.file(paste0(u0, prdir, zpr), zpr)
   }
-  unzip(cfile)
-  prmuns <- readOGR('.', '41MUE250GC_SIR') 
-  save('prmuns', file=rfile) 
+  if (!file.exists('PR_Municipios_2019.shp'))
+    unzip(zpr)
+  prmun <- readOGR('.', 'PR_Municipios_2019') 
+  save('prmun', file=rpr) 
 }
 ```
 
-Há `r nrow(prmuns)` areas nesse mapa e podemos 
+## Inspeciona e plota 
+
+
+Há `r nrow(prmun)` areas nesse mapa e podemos 
 visualizar esse mapa com 
 
 ```{r mapa, out.width="99%", fig.align='center', fig.pos='h'}
 par(mar=c(0,0,0,0))
-plot(prmuns)
+plot(prmun)
 ```
+
+## Um sub-conjunto de municípios 
 
 Nós vamos fazer visualizações e para que fique mais didático vamos 
 considerar apenas os municípios com centroide a menos de 70 kilômetros 
@@ -68,21 +100,21 @@ Inicialmente, calculamos a distância (em km)
 de cada município a Guaratuba:
 
 ```{r headd}
-head(prmuns@data, 3)
-ig <- which(prmuns@data$NM_MUNICIP=='GUARATUBA')
-ce <- coordinates(prmuns)
+head(prmun@data, 3)
+ig <- which(prmun@data$NM_MUN=='Guaratuba')
+ce <- coordinates(prmun)
 dist.g <- spDistsN1(ce, ce[ig, ], longlat=TRUE)
 summary(dist.g) 
 ```
 
-Agora, selecionamos aqueles com distância menor que 70 kilometors: 
+Agora, selecionamos aqueles com distância menor que 70 kilometros: 
 
 ```{r micro}
 ii <- which(dist.g<70)
-mapa <- prmuns[ii, ]
+mapa <- prmun[ii, ]
 ```
 
-## Vizinhança 
+# Vizinhança 
 
 A lista de vizinhança pode ser obtida usando a função `poly2nb()`
 do pacote **spdep**, @spdep. 
@@ -105,7 +137,9 @@ text(ce.mapa[,1], ce.mapa[,2], mapa$NM_MUNICIP, cex=0.5, col='blue')
 ```
 
 
-## Definindo modelos espaciais 
+# Um exemplo de modelo espacial
+
+## Definição teórica
 
 O modelo de Besag mais simples é definido por distribuições condicionais da forma 
 $$x_i | \mathbf{x}_{-i} \sim \textrm{Normal}(m_i, v_i)$$ 
@@ -139,6 +173,8 @@ R_{ij} = \left\{ \begin{array}{rl}
  \end{array} \right.
 \]
 
+## Definição em R
+
 Podemos construir $\mathbf{R}$ a partir da matriz de vizinhanças com 
 
 ```{r R}
@@ -164,7 +200,7 @@ para uma reparametrização do modelo de Besag-York-Mollié, @besagYM:1991.
 Para a simulação, vamos considerar o mapa do estado do Paraná. 
 
 ```{r prR}
-viz <- poly2nb(prmuns)
+viz <- poly2nb(prmun)
 ni <- card(viz)
 n <- length(ni)
 grafo <- sparseMatrix(i=rep(1:n, ni), j=unlist(viz))
@@ -185,10 +221,130 @@ library(viridisLite)
 cores <- viridis(n)
 
 par(mar=c(0,0,0,0))
-plot(prmuns, col=cores[rank(x)]) 
+plot(prmun, col=cores[rank(x)]) 
 q <- quantile(x, 0:7/7)
 library(maptools)
-legend('topright', format(q, digits=2), fill=viridis(8))
+legend('topright', 
+       format(q, digits=2), 
+       fill=viridis(8))
 ```
 
-## Referências 
+# Vizinhança dos municípios do Brasil
+
+## Obtendo o mapa
+
+Obtemos o mapa e importamos de forma 
+similar ao que fizemos no início. 
+
+```{r brdownload, results='hide'}
+brdir <- 'municipio_2019/Brasil/BR/'
+zbr <- 'br_municipios_20200807.zip'
+rbr <- 'brmun.RData'
+if (file.exists(rbr)) {
+  load(rbr)
+} else {
+  if (!file.exists(zpr)) {
+    download.file(paste0(u0, brdir, zbr), zbr)
+  }
+  if (!file.exists('BR_Municipios_2019.shp'))
+    unzip(zbr)
+  brmun <- readOGR('.', 'BR_Municipios_2019') 
+  print(system.time(
+    save('brmun', file=rbr, compress='xz')))
+}
+```
+
+## Lista de vizinhança inicial
+
+Vamos criar uma lista de vizinhança em 2 passos. 
+Criamos uma lista de vizinhança como no exemplo 
+anterior e depois verificamos a existência de 
+municípios sem vizinhos aos quais adicionamos 
+connecções a municípios próximos. 
+
+Criamos uma lista inicial de vizinhos. 
+Como esse passo pode demorar alguns minutos, 
+salvamos ela para poder evitar obtê-la 
+novamente mais de uma vez.
+```{r nbbr0}
+if (file.exists('nbbr0.RData')) {
+  load('nbbr0.RData')
+} else {
+  print(system.time(nbbr0 <- poly2nb(brmun)))
+  save('nbbr0', file='nbbr0.RData')
+}
+```
+
+## Adiciona vizinhos à áreas isoladas
+
+Obtemos o numero de vizinhos de cada área
+```{r nn0}
+nn0 <- card(nbbr0)
+n0 <- sum(nn0==0)
+n0
+```
+
+Procuramos municípios próximos aos municípios 
+sem vizinhos 
+```{r brcoo}
+brm.coo <- coordinates(brmun)
+ii0 <- which(nn0==0)
+ii0near <- sapply(ii0, function(i) {
+    d2 <- rowSums(sweep(brm.coo, 2, brm.coo[i, ])^2)
+    head(order(sqrt(d2)), 7)
+})
+ii0
+ii0near
+```
+
+Visualizamos esses casos
+```{r plotn0}
+par(mfrow=c(1,n0), mar=c(0,0,0,0))##, xaxs='i', yaxs='i')
+for (i in 1:n0) {
+    plot(brmun[ii0near[,i], ], col=rgb(0:6/6, 0.5, 6:0/6), 
+         xlim=bbox(brmun[ii0near[,i], ])[1, ] + c(-1, 1)/2)
+    plot(nbbr0, brm.coo, add=TRUE)
+    text(brm.coo[ii0[i], 1], brm.coo[ii0[i], 2],
+         brmun@data$NM_MUN[ii0[i]], cex=1.2, srt=45) 
+}
+```
+
+Adicionamos os dois municípios mais próximos como 
+vizinhos desses `r n0` municípios sem vizinhos. 
+
+```{r nbbr}
+nbbr <- nbbr0
+for (i in 1:n0) {
+    jj <- as.integer(ii0near[2:3, i])
+    nbbr[[ii0[i]]] <- jj
+    nbbr[[jj[1]]] <- c(nbbr[[jj[1]]], ii0[i])
+    nbbr[[jj[2]]] <- c(nbbr[[jj[2]]], ii0[i])
+}
+nbbr0
+nbbr[ii0]
+```
+
+Visualizamos o resultado
+
+```{r plotnb0v}
+par(mfrow=c(1,n0), mar=c(0,0,0,0))##, xaxs='i', yaxs='i')
+for (i in 1:n0) {
+    plot(brmun[ii0near[,i], ], col=rgb(0:6/6, 0.5, 6:0/6), 
+         xlim=bbox(brmun[ii0near[,i], ])[1, ] + c(-1, 1)/2)
+    plot(nbbr, brm.coo, add=TRUE)
+    text(brm.coo[ii0[i], 1], brm.coo[ii0[i], 2],
+         brmun@data$NM_MUN[ii0[i]], cex=1.2, srt=45) 
+}
+```
+
+É comum usar listas de vizinhanças em modelos 
+estimados com o pacote *INLA*. 
+Podemos usar a função `nb2INLA` para exportar 
+a lista de vizinhança no formato de arquivo 
+de vizinhança que o o *INLA* usa com
+
+```{r nb2INLA}
+nb2INLA('nbbr.txt', nbbr)
+```
+
+# Referências 

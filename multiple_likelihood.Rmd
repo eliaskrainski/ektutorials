@@ -67,12 +67,11 @@ n <- 300
 set.seed(1)
 z <- runif(n)
 
-set.seed(2)
 rho <- 0.9
 sigma_x <- 0.7 
 (sigma_w <- sqrt(sigma_x^2*(1-rho^2)))
+set.seed(2)
 x <- arima.sim(list(ar=rho), n, sd=sigma_w)
-x <- x - mean(x)
 
 set.seed(3)
 y1 <- rnorm(n, aa[1] + aa[2]*z + x, sigma_e)

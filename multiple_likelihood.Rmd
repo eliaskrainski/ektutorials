@@ -1,0 +1,177 @@
+---
+title: "Multiple likelihood examples in INLA"
+author: "Elias T Krainski"
+date: "last update in `r format(Sys.Date())`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction 
+
+To show how to fit models for multiple outcomes with shared effects. 
+
+### Example 1: one Gaussian and two Poisson 
+
+Suppose we have the first outcome drawn from a Gaussian distribution 
+\[ y^{(1)}_i ~ \sim \mathrm{Normal}(\mu_i, \sigma^2_e) 
+\]
+where the expected value varies.
+
+Suppose we have the second outcome drawn from a Poisson 
+\[ y^{(2)}_i ~ \sim \mathrm{Poisson}(\lambda_i) 
+\]
+where the rate varies.
+
+Suppose we have the third outcome drawn from a Poisson 
+\[ y^{(3)}_i ~ \sim \mathrm{Poisson}(\pi_i) 
+\]
+where the rate varies.
+
+Suppose that $\mu_i$, $\lambda_i$ and $\pi_i$ modeled as follows. 
+
+We consider that 
+\[ \mu_i = a_0 + a_1 z_i + u_i \]
+where $a_0$ is an intercept, 
+$a_1$ is a regression coefficient, 
+$z_i$ is a covariate and 
+$u_i$ is a random effect. 
+
+We also consider that 
+\[ \log(\lambda_i) = b_0 + b_1 z_i + \beta_1 x_i \]
+where $b_0$ is an intercept, 
+$b_1$ is a regression coefficient and 
+$\beta_1$ is a parameter linking the random effect 
+in all the outcomes. 
+
+Similarly 
+\[ \log(\pi_i) = c_0 + c_1 z_i + \beta_2 x_i \]
+where $c_0$ is an intercept, 
+$c_1$ is a regression coefficient and 
+$\beta_2$ is a parameter linking the random effect 
+in all the outcomes. 
+
+### Data simulation
+
+```{r simulate}
+aa <- c(100, 3)
+bb <- c(1, -1)
+cc <- c(2, 0.5)
+beta1 <- 0.3 
+beta2 <- -0.5
+sigma_e <- 0.3
+
+n <- 300
+set.seed(1)
+z <- runif(n)
+
+set.seed(2)
+rho <- 0.9
+sigma_x <- 0.7 
+(sigma_w <- sqrt(sigma_x^2*(1-rho^2)))
+x <- arima.sim(list(ar=rho), n, sd=sigma_w)
+x <- x - mean(x)
+
+set.seed(3)
+y1 <- rnorm(n, aa[1] + aa[2]*z + x, sigma_e)
+
+set.seed(4)
+y2 <- rpois(n, exp(bb[1] + bb[2]*z + beta1*x))
+
+set.seed(5)
+y3 <- rpois(n, exp(cc[1] + cc[2]*z + beta2*x))
+
+par(mfrow=c(5,1), mar=c(1,3,0,0), mgp=c(2,0.5,0))
+plot(x, type='l', xlab='', ylab='x', axes=F); axis(2)
+plot(z, type='l', xlab='', ylab='z', axes=F); axis(2)
+plot(y1, type='h', xlab='', ylab='y1', axes=F); axis(2) 
+plot(y2, type='l', xlab='', ylab='y2 counts', axes=F); axis(2)
+par(mar=c(2,3,0,0))
+plot(y3, type='l', xlab='Time', ylab='y3 counts', bty='n')
+```
+
+
+## Model fitting 
+
+First, we organize the data considering that we have three outcomes. 
+The standard way is to consider a matrix where each columns is defined 
+for one outcome. 
+However, as we have two likelihood which are the same AND do not have its 
+own hyperparameter each, we can use one column for fitting for both. 
+
+Thus, we will have just two colums for the outcome
+```{r Y}
+ldata <- list(Y=rbind(cbind(y1, rep(NA, n)), cbind(NA, c(y2, y3))))
+``` 
+and we inform an indicator link for making predictions, if desired. 
+```{r iilink}
+ldata$ilink <- rep(1:2, c(n, n*2))
+```
+
+Now, we organize the fixed effects considering it so that we will be able 
+to fit a regression coefficient for each outcome. 
+We just have to include the covariate values matching the lines in the 
+outcome matrix and having zeroes (or NA) for the corresponding lines 
+of the other outcomes. 
+```{r covariate}
+ldata$z1 <- c(z, rep(NA, 2*n))
+ldata$z2 <- c(rep(NA, n), z, rep(NA, n))
+ldata$z3 <- c(rep(NA, 2*n), z)
+```
+
+This has to be done with the intercept as well in order to have one intercept 
+for each outcome. 
+That is we need to have the intercept explicitly, as a covariate. 
+```{r intercept}
+ldata$intercept1 <- c(rep(1,n), rep(NA, 2*n))
+ldata$intercept2 <- c(rep(NA, n), rep(1, n), rep(NA, n))
+ldata$intercept3 <- c(rep(NA, 2*n), rep(1, n))
+``` 
+
+The last think is to consider the index sets for the random effect, 
+one for each outcome. 
+```{r iirandom}
+ldata$i1 <- c(1:n, rep(NA, 2*n))
+ldata$i2 <- c(rep(NA, n), 1:n, rep(NA, n))
+ldata$i3 <- c(rep(NA, 2*n), 1:n)
+str(ldata)
+```
+
+Setting the hyperparameter priors 
+```{r priors}
+pc.prec <- list(prior='pc.prec', param=c(0.5,0.5))
+pc.ar1 <- list(prec=pc.prec, 
+               rho=list(prior='pccor1', param=c(0.7,0.7)))
+```
+
+The formulae just accounts for the linear prediction definition matching 
+with its elements on the data list. 
+We just have to reminder to include the intercept explicitly, 
+dropping the default one, the covariate names and the names of the 
+index for the random effect and its copies.
+```{r formulae}
+formulae <- Y ~ 0 + intercept1 + intercept2 + intercept3 + 
+  z1 + z2 + z3 + f(i1, model='ar1', hyper=pc.ar1) + 
+  f(i2, copy='i1', fixed=FALSE) + 
+  f(i3, copy='i1', fixed=FALSE)
+```
+
+We now inform these thinks for `inla()`
+```{r inla, eval=TRUE}
+library(INLA)
+result <- inla(
+  formulae, 
+  family=c('gaussian', 'poisson'), 
+  data=ldata,
+  control.predictor=list(link=ilink),
+  control.family=list(
+    list(hyper=list(prec=pc.prec)), 
+    list())
+)
+round(cbind(true=c(aa,bb,cc)[c(1,3,5,2,4,6)], 
+            result$summary.fix[,1:2]), 4)
+round(cbind(true=c(1/sigma_e^2, 1/sigma_x^2, rho, beta1, beta2), 
+            result$summary.hy[,1:2]), 4)
+```

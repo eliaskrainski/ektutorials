@@ -154,8 +154,8 @@ and $\mathbf{G}^{(2)}$ are defined in @lindgrenRL2011.
 The $\kappa$ parameter is related to the practical range 
 as $\kappa = \sqrt{8\nu}/\rho$ and 
 the marginal variance as 
-$\tau^2=\frac{\gamma(\nu)}
-{\gamma(\alpha)(4\pi)^{d/2}\kappa^{2\nu}\sigma_u^2}$, 
+$\tau^2=\frac{\Gamma(\nu)}
+{\Gamma(\alpha)(4\pi)^{d/2}\kappa^{2\nu}\sigma_u^2}$, 
 @lindgrenR2015. 
 
 The practical range and the marginal variance parameters 

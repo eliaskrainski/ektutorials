@@ -3,7 +3,7 @@ title: "Simulando do modelo de Besag escalonado"
 author: "Elias T. Krainski"
 date: "Outubro, 2018"
 output: pdf_document
-bibliography: referencias.bib 
+bibliography: references.bib 
 ---
 
 ```{r setup, include=FALSE}

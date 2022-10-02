@@ -1,4 +1,4 @@
-
+## https://eliaskrainski.github.io/tutorials/ICoMCoS2022.zip
 ### load script to build the mesh
 system.time(source('us_mesh.R'))
 
@@ -36,7 +36,6 @@ inla.setOption(
 fit <- bru(
     model, tmax1day, family='gaussian',
     options=list(
-        control.mode=list(theta=c(4, 4.219, -1), restart=TRUE),
         verbose=TRUE,
         control.family=list(hyper=lik.prec)))
 

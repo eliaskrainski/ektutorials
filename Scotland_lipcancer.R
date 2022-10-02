@@ -1,5 +1,5 @@
-## GOAL: 
-## 1. implement different disease mapping models using
+## https://eliaskrainski.github.io/tutorials/ICoMCoS2022.zip
+## To implement different disease mapping models using
 ## - a linear covariate
 ## - a spatial random effect 
 
@@ -75,6 +75,7 @@ library(INLA)
 
 ### some INLA settings
 inla.setOption(
+    inla.mode='experimental',
     smtp='pardiso',
     pardiso.license='~/.pardiso.lic')
 

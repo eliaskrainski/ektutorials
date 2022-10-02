@@ -22,17 +22,15 @@ bound <- inla.sp2segment(map.moll)
 ### build a mesh on the US boundary
 mesh <- inla.mesh.2d(
     boundary=bound,
-    max.edge=c(25, 200),
-    offset=c(25, 300),
-    cutoff=25,
+    max.edge=c(100, 200),
+    offset=c(50, 300),
+    cutoff=50,
     n=25,
     min.angle=25)
 mesh$n
 
-if(plotting) {
-    
+if(plotting) {    
     plot(mesh, asp=1)
-
 }
 
 ### project into a grid

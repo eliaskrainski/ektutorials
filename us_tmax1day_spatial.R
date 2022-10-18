@@ -1,4 +1,4 @@
-## https://eliaskrainski.github.io/tutorials/ICoMCoS2022.zip
+## https://github.com/eliaskrainski/ektutorials
 ### load script to build the mesh
 system.time(source('us_mesh.R'))
 
@@ -60,3 +60,40 @@ image.plot(
     z=y.m+fit$summary.fix$mean[1], asp=1)
 points(tmax1day, cex=0.05, pch=8)
 plot(map.moll, add=TRUE, border=gray(0.3,0.5))
+
+### group cross validation
+system.time(gcpo <- inla.group.cv(fit, 20))
+
+### selected locations to visualize
+isel <- c(867, 1349, 1914, 2114, 2618, 3055, 3658, 4608, 4666, 5060, 5348)
+
+### number of neighbors (with m=10) at the selected data locations
+nnb <- sapply(gcpo$groups[isel], function(x) length(x$idx)-1)
+nnb
+
+### plot the neighbors for some data points
+locs <- coordinates(tmax1day)
+par(mfrow=c(1,1), mar=c(0,0,0,0))
+image.plot(
+    x=grid.proj$x,
+    y=grid.proj$y,
+    z=y.m+fit$summary.fix$mean[1], asp=1)
+plot(map.moll, add=TRUE, border=gray(0.3,0.5))
+points(tmax1day, cex=0.5, pch=8)
+for(i in isel) {
+    jj <- gcpo$groups[[i]]$idx[-1]
+    segments(locs[i, 1], locs[i, 2], locs[jj, 1], locs[jj, 2])
+    points(locs[jj, ], pch=19, cex=1, col='white')
+}
+points(locs[isel, ], pch=19, cex=3, col='white')
+text(locs[isel, 1], locs[isel, 2], paste(nnb), col='blue3', cex=.8)
+
+if(FALSE) {
+
+    ll <- locator()
+    isel <- sapply(1:length(ll[[1]]), function(i)
+        which.min(sqrt((locs[,1]-ll$x[i])^2 +
+                   (locs[,2]-ll$y[i])^2)))
+    isel <- sort(isel)
+    isel
+}

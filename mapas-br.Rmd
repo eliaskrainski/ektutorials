@@ -440,7 +440,7 @@ map$semSaneamento <- merge(
     y = saneamento[c("area", "propSem")],
     all.x = TRUE, ## precisa de todas as areas
     sort = FALSE ## manter a ordem original
-)$propSem
+)$propSem ## seleciona a variável de interesse
 spplot(map, "semSaneamento")
 ```
 

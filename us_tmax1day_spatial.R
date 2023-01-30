@@ -73,6 +73,8 @@ nnb
 
 ### plot the neighbors for some data points
 locs <- coordinates(tmax1day)
+
+png('figz.png', 3000, 2000, res=100)
 par(mfrow=c(1,1), mar=c(0,0,0,0))
 image.plot(
     x=grid.proj$x,
@@ -87,6 +89,7 @@ for(i in isel) {
 }
 points(locs[isel, ], pch=19, cex=3, col='white')
 text(locs[isel, 1], locs[isel, 2], paste(nnb), col='blue3', cex=.8)
+dev.off()
 
 if(FALSE) {
 

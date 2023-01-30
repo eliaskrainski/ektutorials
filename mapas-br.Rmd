@@ -52,9 +52,9 @@ u0 <- paste0(
   'http://geoftp.ibge.gov.br/',
   'organizacao_do_territorio/', 
   'malhas_territoriais/malhas_municipais/')
-prdir <- 'municipio_2019/UFs/PR/'
-zpr <- 'pr_municipios.zip'
-rpr <- 'prmun.RData'
+map.dir <- 'municipio_2019/UFs/PR/'
+map.zip <- 'pr_municipios.zip'
+map.rds <- "map.rds"
 ```
 
 ## Download e importação 
@@ -66,33 +66,32 @@ Se não (primeira vez), faz o download
 e carrega o shapefile com mapa em R.
 
 ```{r loadpr}
-if (file.exists(rpr)) {
-  load(rpr) 
-} else {
+if (!file.exists(map.rds)) {
   library(rgdal)
-  if (!file.exists(zpr)) {
-    download.file(paste0(u0, prdir, zpr), zpr)
+  if (!file.exists(map.zip)) {
+    download.file(paste0(u0, map.dir, map.zip), map.zip)
   }
   if (!file.exists('PR_Municipios_2019.shp'))
-    unzip(zpr)
-  prmun <- readOGR('.', 'PR_Municipios_2019') 
-  save('prmun', file=rpr) 
+    unzip(map.zip)
+  saveRDS(readOGR('.', 'PR_Municipios_2019'), 
+          map.rds)
 }
+map <- readRDS(map.rds) 
 ```
 
 ## Inspeciona e plota 
 
 ```{r insppr}
-dim(prmun)
-head(prmun@data, 3)
+dim(map)
+head(map@data, 3)
 ```
 
-Há `r nrow(prmun)` areas nesse mapa e podemos 
+Há `r nrow(map)` areas nesse mapa e podemos 
 visualizar esse mapa com 
 
 ```{r mapa, out.width="99%", fig.align='center', fig.pos='h'}
 par(mar=c(0,0,0,0))
-plot(prmun)
+plot(map)
 ```
 
 ## Um sub-conjunto de municípios 
@@ -104,8 +103,8 @@ Inicialmente, calculamos a distância (em km)
 de cada município a Guaratuba:
 
 ```{r headd}
-ig <- which(prmun@data$NM_MUN=='Guaratuba')
-ce <- coordinates(prmun)
+ig <- which(map@data$NM_MUN=='Guaratuba')
+ce <- coordinates(map)
 dist.g <- spDistsN1(ce, ce[ig, ], longlat=TRUE)
 summary(dist.g) 
 ```
@@ -114,7 +113,7 @@ Agora, selecionamos aqueles com distância menor que 70 kilometros:
 
 ```{r micro}
 ii <- which(dist.g<70)
-mapa <- prmun[ii, ]
+mapa <- map[ii, ]
 ```
 
 # Vizinhança 
@@ -203,7 +202,7 @@ para uma reparametrização do modelo de Besag-York-Mollié, @besagYM:1991.
 Para a simulação, vamos considerar o mapa do estado do Paraná. 
 
 ```{r prR}
-viz <- poly2nb(prmun)
+viz <- poly2nb(map)
 ni <- card(viz)
 n <- length(ni)
 grafo <- sparseMatrix(i=rep(1:n, ni), j=unlist(viz))
@@ -224,7 +223,7 @@ library(viridisLite)
 cores <- viridis(n)
 
 par(mar=c(0,0,0,0))
-plot(prmun, col=cores[rank(x)]) 
+plot(map, col=cores[rank(x)]) 
 q <- quantile(x, 0:7/7)
 library(maptools)
 legend('topright', 
@@ -241,20 +240,18 @@ similar ao que fizemos no início.
 
 ```{r brdownload, results='hide'}
 brdir <- 'municipio_2019/Brasil/BR/'
-zbr <- 'br_municipios_20200807.zip'
-rbr <- 'brmun.RData'
-if (file.exists(rbr)) {
-  load(rbr)
-} else {
-  if (!file.exists(zpr)) {
-    download.file(paste0(u0, brdir, zbr), zbr)
+fl.zip <- 'br_municipios_20200807.zip'
+fl.rds <- 'brmun.rds'
+if (!file.exists(fl.rds)) {
+  if (!file.exists(fl.zip)) {
+    download.file(paste0(u0, brdir, fl.zip), fl.zip)
   }
   if (!file.exists('BR_Municipios_2019.shp'))
-    unzip(zbr)
-  brmun <- readOGR('.', 'BR_Municipios_2019') 
-  print(system.time(
-    save('brmun', file=rbr, compress='xz')))
+    unzip(fl.zip)
+  saveRDS(readOGR('.', 'BR_Municipios_2019'), 
+          fl.rds)
 }
+map <- readRDS(fl.rds)
 ```
 
 ## Lista de vizinhança inicial
@@ -270,19 +267,17 @@ Como esse passo pode demorar alguns minutos,
 salvamos ela para poder evitar obtê-la 
 novamente mais de uma vez.
 ```{r nbbr0}
-if (file.exists('nbbr0.RData')) {
-  load('nbbr0.RData')
-} else {
-  print(system.time(nbbr0 <- poly2nb(brmun)))
-  save('nbbr0', file='nbbr0.RData')
+if (!file.exists('nb0.rds')) {
+  saveRDS(poly2nb(map), "nb0.rds")
 }
+nb0 <- readRDS("nb0.rds") 
 ```
 
 ## Adiciona vizinhos à áreas isoladas
 
 Obtemos o numero de vizinhos de cada área
 ```{r nn0}
-nn0 <- card(nbbr0)
+nn0 <- card(nb0)
 n0 <- sum(nn0==0)
 n0
 ```
@@ -290,10 +285,10 @@ n0
 Procuramos municípios próximos aos municípios 
 sem vizinhos 
 ```{r brcoo}
-brm.coo <- coordinates(brmun)
+coo <- coordinates(map)
 ii0 <- which(nn0==0)
 ii0near <- sapply(ii0, function(i) {
-    d2 <- rowSums(sweep(brm.coo, 2, brm.coo[i, ])^2)
+    d2 <- rowSums(sweep(coo, 2, coo[i, ])^2)
     head(order(sqrt(d2)), 7)
 })
 ii0
@@ -304,11 +299,11 @@ Visualizamos esses casos
 ```{r plotn0}
 par(mfrow=c(1,n0), mar=c(0,0,0,0))##, xaxs='i', yaxs='i')
 for (i in 1:n0) {
-    plot(brmun[ii0near[,i], ], col=rgb(0:6/6, 0.5, 6:0/6), 
-         xlim=bbox(brmun[ii0near[,i], ])[1, ] + c(-1, 1)/2)
-    plot(nbbr0, brm.coo, add=TRUE)
-    text(brm.coo[ii0[i], 1], brm.coo[ii0[i], 2],
-         brmun@data$NM_MUN[ii0[i]], cex=1.2, srt=45) 
+    plot(map[ii0near[,i], ], col=rgb(0:6/6, 0.5, 6:0/6), 
+         xlim=bbox(map[ii0near[,i], ])[1, ] + c(-1, 1)/2)
+    plot(nb0, coo, add=TRUE)
+    text(coo[ii0[i], 1], coo[ii0[i], 2],
+         map@data$NM_MUN[ii0[i]], cex=1.2, srt=45) 
 }
 ```
 
@@ -316,15 +311,15 @@ Adicionamos os dois municípios mais próximos como
 vizinhos desses `r n0` municípios sem vizinhos. 
 
 ```{r nbbr}
-nbbr <- nbbr0
+nb <- nb0
 for (i in 1:n0) {
     jj <- as.integer(ii0near[2:3, i])
-    nbbr[[ii0[i]]] <- jj
-    nbbr[[jj[1]]] <- c(nbbr[[jj[1]]], ii0[i])
-    nbbr[[jj[2]]] <- c(nbbr[[jj[2]]], ii0[i])
+    nb[[ii0[i]]] <- jj
+    nb[[jj[1]]] <- c(nb[[jj[1]]], ii0[i])
+    nb[[jj[2]]] <- c(nb[[jj[2]]], ii0[i])
 }
-nbbr0
-nbbr[ii0]
+nb0
+nb[ii0]
 ```
 
 Visualizamos o resultado
@@ -332,11 +327,11 @@ Visualizamos o resultado
 ```{r plotnb0v}
 par(mfrow=c(1,n0), mar=c(0,0,0,0))##, xaxs='i', yaxs='i')
 for (i in 1:n0) {
-    plot(brmun[ii0near[,i], ], col=rgb(0:6/6, 0.5, 6:0/6), 
-         xlim=bbox(brmun[ii0near[,i], ])[1, ] + c(-1, 1)/2)
-    plot(nbbr, brm.coo, add=TRUE)
-    text(brm.coo[ii0[i], 1], brm.coo[ii0[i], 2],
-         brmun@data$NM_MUN[ii0[i]], cex=1.2, srt=45) 
+    plot(map[ii0near[,i], ], col=rgb(0:6/6, 0.5, 6:0/6), 
+         xlim=bbox(map[ii0near[,i], ])[1, ] + c(-1, 1)/2)
+    plot(nb, coo, add=TRUE)
+    text(coo[ii0[i], 1], coo[ii0[i], 2],
+         map@data$NM_MUN[ii0[i]], cex=1.2, srt=45) 
 }
 ```
 
@@ -347,7 +342,102 @@ a lista de vizinhança no formato de arquivo
 de vizinhança que o o *INLA* usa com
 
 ```{r nb2INLA}
-nb2INLA('nbbr.txt', nbbr)
+nb2INLA('graph.txt', nb)
+```
+
+# Adicionando dados
+
+É comum considerar dados de utilização, estatísticas vitais (nacimento ou óbito), 
+notificações compulsórias ou dados de censos disponibilizados pelo DATASUS, @datasus. 
+
+## Exemplo
+
+Consideremos um exemplo que pode ser seguido para as outras variáveis 
+que o DATASUS disponibiliza ao nível agregado por municípios. 
+Suponha que consultamos algumas das variáveis disponíveis por municípios 
+oriundas do Censo Demográfico Brasileiro e disponibilizadas pelo DATASUS a partir do link 
+[http://tabnet.datasus.gov.br/cgi/tabcgi.exe?ibge/cnv/sanbr.def](http://tabnet.datasus.gov.br/cgi/tabcgi.exe?ibge/cnv/sanbr.def), 
+variáveis estas relativas às instalações sanitárias. 
+
+Como exemplo, vamos pedir para organizar o resultado com município nas linhas, 
+"Instalações sanitárias" nas colunas e o conteúdo "Moradores", 
+e selecionar ano "2010", como na figura a seguir 
+
+![](figures/tabnet1.png)
+
+Ao clicar em <Mostra>, no final da página, será mostrado a tabela como na figura a seguir 
+
+![](figures/tabnet2.png)
+
+No final dessa tela há a opção de salvar essa tabela como um arquivo em formato 
+CSV, clicando no botão "COPIA COMO CSV", conforme mostrado na figura a seguir
+
+![](figures/tabnet3.png)
+
+Clicando nesse botão, uma arquivo será salvo no seu computador. 
+No exemplo, as primeiras linhas desse arquivo serão como na figura a seguir 
+
+![](figures/tabnet4.png)
+
+## Juntando dados ao mapa
+
+Precisamos agora juntar os dados ao mapa. 
+Ou, simplesmente, colocar os dados na ordem do mapa para possibilitar 
+análises considerando a localização geográfica. 
+
+Vamos ler os dados supondo que o nome do arquivo seja 
+"saneamento_moradores.csv" a seguir. 
+É preciso utilizar `skip = 3` para ler a partir da linha 4 e 
+utilizo `encoding = "latin1"` 
+porque o sistema operacional que uso tem encoding padrão diferente. 
+
+```{r saneament}
+saneamento <- read.csv2(
+  "saneamento_moradores.csv", 
+  skip = 3, 
+  na.strings = "-",
+  encoding = "latin1")
+head(saneamento,2)
+```
+
+A primeira coluna dos dados contem um código de município, com 6 dígitos, 
+e o nome do município concatenados.
+Portanto, vamos utilizar os 6 primeiros caracteres.
+O código de município no padrão do IBGE contem 7 dígitos, 
+mas os 6 primeiros são suficientes para o nosso propósito.
+```{r match}
+head(map@data,2)
+```
+
+Criamos uma variável `area` para indexar o mapa a seguir 
+```{r area}
+saneamento$area <- pmatch(
+  substr(saneamento[,1], 1, 6), 
+  substr(map@data[,1], 1, 6))
+head(saneamento, 2)
+```
+
+## Plotting data
+
+Vamos criar uma variável dividindo o número de moradores vivendo em domicílios que 
+"Não tem instalação sanitária" pelo número "Total" de moradores, em cada município. 
+
+```{r nosanit}
+saneamento$propSem <- saneamento$"Não.tem.instalação.sanitária"/saneamento$"Total"
+```
+
+Agora, vamos visualizar o mapa considerando uma variável do conjunto de dados. 
+Há várias formas de fazer isso. 
+A mais simples é adicionar a variável presente nos dados ao elemento `data` do mapa 
+e usar a função `spplot()`. 
+Há um porém aqui. 
+Pode ocorrer que nem todas as áreas do mapa tenham dados. 
+Neste caso a coluna `area` criada terá valor NA. 
+
+```{r spplot}
+map$semSaneamento <- rep(NA, nrow(map))
+map$semSaneamento[(1:nrow(map)) %in% saneamento$area] <- saneamento$propSem[saneamento$area]
+spplot(map, "semSaneamento")
 ```
 
 # Referências 

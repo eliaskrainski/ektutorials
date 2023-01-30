@@ -435,8 +435,12 @@ Pode ocorrer que nem todas as áreas do mapa tenham dados.
 Neste caso a coluna `area` criada terá valor NA. 
 
 ```{r spplot}
-map$semSaneamento <- rep(NA, nrow(map))
-map$semSaneamento[(1:nrow(map)) %in% saneamento$area] <- saneamento$propSem[saneamento$area]
+map$semSaneamento <- merge(
+    x = data.frame(area = 1:nrow(map)),
+    y = saneamento[c("area", "propSem")],
+    all.x = TRUE, ## precisa de todas as areas
+    sort = FALSE ## manter a ordem original
+)$propSem
 spplot(map, "semSaneamento")
 ```
 
